@@ -1,0 +1,14 @@
+# API Key：绝不进仓库。跑之前自己建这个文件，一行一个 Key。
+key.txt
+.env
+*.key
+
+# 抓下来的游戏帧（都是你的游戏画面，没必要传，也占空间）
+captures/
+
+# 测试产物 / 临时截图
+*.png
+*.jpg
+__pycache__/
+*.pyc
+*.log
