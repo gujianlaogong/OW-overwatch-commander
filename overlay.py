@@ -25,15 +25,16 @@ CARD_QSS = """
     border: 1px solid rgba(43, 212, 189, 64);
     border-radius: 14px;
 }
-#tag  { color: #39d3bb; font: 11px "Microsoft YaHei UI"; letter-spacing: 3px;
+#tag  { color: #39d3bb; font: 12px "Microsoft YaHei UI"; letter-spacing: 3px;
         background: transparent; border: none; }
-#body { color: #e6f2f0; font: 15px/1.75 "Microsoft YaHei UI";
+#body { color: #e6f2f0; font: 16px/1.8 "Microsoft YaHei UI";
         background: transparent; border: none; }
-#foot { color: #5d7a79; font: 11px "Microsoft YaHei UI";
+#foot { color: #5d7a79; font: 12px "Microsoft YaHei UI";
         background: transparent; border: none; }
 """
 
-WIDTH = 470
+MAX_W = 560          # 卡片最宽到这儿，再长的文字就换行往下长
+PAD = 20             # 卡片内边距，正文据此限宽
 MARGIN = 22          # 距屏幕边缘
 HOLD_MS = 7000       # 说完后停留多久再淡出
 FADE_MS = 700
@@ -53,6 +54,7 @@ class CoachOverlay(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)  # 双保险
         self.setWindowTitle("Coach")
+        self.setMaximumWidth(MAX_W)
 
         card = QWidget()
         card.setObjectName("card")
@@ -63,8 +65,10 @@ class CoachOverlay(QWidget):
         self.body = QLabel("正在回看这一波…")
         self.body.setObjectName("body")
         self.body.setWordWrap(True)
+        self.body.setMaximumWidth(MAX_W - PAD * 2)  # 到限宽就换行，卡片往下长
         self.foot = QLabel("")
         self.foot.setObjectName("foot")
+        self.foot.setWordWrap(True)
 
         inner = QVBoxLayout(card)
         inner.setContentsMargins(20, 15, 20, 14)
@@ -81,30 +85,40 @@ class CoachOverlay(QWidget):
         self.anim_out = None
 
     # ---------------------------------------------------------- 内容
+    def _relayout(self):
+        """字变多了就重新量一遍尺寸，再贴回角落。
+           少了这一步，卡片会停在弹出那一刻的高度，后面的字全被裁掉。"""
+        self.adjustSize()
+        self.move(self.place())
+
     def begin(self):
         """模型开腔了 —— 清掉"正在回看"，准备接字。"""
         self.body.setText("")
+        self._relayout()
 
     def push(self, ch):
         """来一个字打一个字。模型的流式节奏就是打字机节奏，不额外加延迟。"""
         self.body.setText(self.body.text() + ch)
+        self._relayout()
 
     def set_foot(self, text):
         self.foot.setText(text)
+        self._relayout()
 
     def fail(self, msg):
         self.tag.setText("COACH · 出错了")
         self.tag.setStyleSheet("#tag{color:#e08b6a;letter-spacing:3px;}")
         self.body.setText(msg)
+        self._relayout()
 
     # ---------------------------------------------------------- 位置与动画
     def place(self, corner="br"):
         scr = QApplication.primaryScreen().availableGeometry()
         if corner == "br":      # 右下：不挡准星，也不挡小地图
-            x = scr.right() - WIDTH - MARGIN
+            x = scr.right() - self.width() - MARGIN
             y = scr.bottom() - self.height() - MARGIN
         else:                   # 右上
-            x = scr.right() - WIDTH - MARGIN
+            x = scr.right() - self.width() - MARGIN
             y = scr.top() + MARGIN
         return QPoint(x, y)
 
