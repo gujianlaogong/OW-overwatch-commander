@@ -89,7 +89,7 @@ python -m venv .venv
 > - `python` 命令不存在？去 [python.org](https://www.python.org/downloads/) 装（记得勾 "Add python.exe to PATH"），或者把命令里的 `python` 换成 `py -3`。
 > - 依赖装在项目自己的 `.venv` 里，**不污染系统 Python**。装完之后，这个项目用的永远是 `.venv` 里那个解释器。
 > - `.venv` 已经在 `.gitignore` 里，不会进仓库，所以每个人都在自己机器上建一次。
-> - **`opencv-python` 不是可选的**：dxcam 拿它做色彩转换，缺了会静默降级到 mss 后端，单帧从约 13 ms 掉到约 40 ms，全屏独占下也更容易抓到黑屏。启动时认准控制台那行 `使用后端: dxcam`。
+> - **`opencv-python` 不是可选的**：dxcam 拿它做色彩转换，缺了会静默降级到 mss 后端，单帧从约 13 ms 掉到约 40 ms，全屏独占下也更容易抓到黑屏。装没装对不用靠猜，下一步的 `check.py` 会直接告诉你实际用上的是哪个后端。
 
 **2. 填 API Key**
 
@@ -102,6 +102,21 @@ python -m venv .venv
 ---
 
 ## 使用
+
+### 装完先自检
+
+```bat
+.venv\Scripts\python.exe check.py
+```
+
+三秒钟打一张表：哪样装了、哪样没装、没装的话该敲什么。**全绿**就可以往下走了。
+
+```bat
+.venv\Scripts\python.exe check.py --online   :: 顺带验证 API Key 通不通（免费，不调模型）
+```
+
+> 最值得看的一行是 **抓帧后端**：必须是 `dxcam`。
+> 如果显示 `mss`，说明 `opencv-python` 没装上——dxcam 缺了它会悄悄降级，不报错、只是变慢。
 
 ### 最省事：双击 `run.bat`
 
@@ -173,6 +188,7 @@ Git Bash：
 
 ```
 coach.py          主程序：后台缓存 + 热键 + 落盘
+check.py          装完体检：哪样装了、哪样没装、没装该敲什么
 analyze.py        分析：抽帧 → 调视觉模型 → 出结论
 overlay.py        浮层卡片（Qt）
 tts.py            语音层：流式合成 + 边收边播
