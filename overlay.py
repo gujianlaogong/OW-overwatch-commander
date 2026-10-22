@@ -60,9 +60,9 @@ class CoachOverlay(QWidget):
         card.setObjectName("card")
         card.setStyleSheet(CARD_QSS)
 
-        self.tag = QLabel("COACH · 战后复盘")
+        self.tag = QLabel("指挥官，D.VA专用频道")
         self.tag.setObjectName("tag")
-        self.body = QLabel("正在回看这一波…")
+        self.body = QLabel("D.VA正在回看这一波…")
         self.body.setObjectName("body")
         self.body.setWordWrap(True)
         self.body.setMaximumWidth(MAX_W - PAD * 2)  # 到限宽就换行，卡片往下长

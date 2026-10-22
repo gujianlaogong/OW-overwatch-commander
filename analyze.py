@@ -165,8 +165,10 @@ def prepare(args):
         f"相邻两张间隔约 {gap:.2f} 秒，最后一张是我阵亡的瞬间或刚阵亡之后。\n"
         f"{layout}\n"
         "现在告诉我：这一波我最该改的地方是什么。\n"
-        "只讲最该改的一条，控制在 30 字以内，说完立刻停 —— "
+        "只讲最该改的一条，控制在 30 字以内，说完立刻停 ——"
+        "当然，如果我有做的不错的地方你也要夸我，也要控制字数"
         "这段话是要念出来听的，长了来不及在重生前听完。"
+        "记住我的名字—— 古见老公"
     )
     return d, frames, prompt
 
@@ -180,11 +182,19 @@ def main():
                     help=f"最多说多少字，默认 {DEFAULT_MAX_TOKENS}（再长就念不完了）")
     ap.add_argument("--no-overlay", action="store_true", help="不弹浮层卡片，只输出到控制台")
     ap.add_argument("--no-voice", action="store_true", help="不念出来")
-    ap.add_argument("--voice", default="Cherry",
-                    help="音色，实测可用: Cherry / Serena / Ethan / Chelsie")
+    ap.add_argument("--voice", default=None,
+                    help="音色：预置 Cherry/Serena/Ethan/Chelsie，或克隆音色 ID。"
+                         "不填就读 voice.txt（把音色 ID 写进去就不用每次带参数）")
+    ap.add_argument("--rate", type=float, default=None,
+                    help="语速，只对克隆音色有效（1.0 偏慢，1.4 开始有点赶）")
     args = ap.parse_args()
 
     want_voice = not args.no_voice
+    if want_voice:
+        # 音色和语速都不传的话，按 voice.txt / 默认值来
+        from tts import DEFAULT_RATE, default_voice
+        args.voice = args.voice or default_voice()
+        args.rate = args.rate or DEFAULT_RATE
 
     pre = prepare(args)
     if not pre:
@@ -218,7 +228,7 @@ def main():
         if want_voice and text.strip():
             try:
                 from tts import speak_blocking
-                speak_blocking(text.strip(), voice=args.voice)
+                speak_blocking(text.strip(), voice=args.voice, rate=args.rate)
             except Exception as e:
                 print(f"  !! 语音播报失败（不影响上面文字）: {type(e).__name__}: {str(e)[:140]}")
     else:
@@ -230,7 +240,7 @@ def main():
             # 正好和视觉模型 2 秒的思考同时跑掉，不用额外等。
             try:
                 from tts import Speaker
-                speaker = Speaker(voice=args.voice)
+                speaker = Speaker(voice=args.voice, rate=args.rate)
                 speaker.failed.connect(
                     lambda m: print(f"  !! 语音失败: {m}", flush=True))
                 speaker.prime()

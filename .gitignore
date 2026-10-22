@@ -1,7 +1,12 @@
 # API Key：绝不进仓库。跑之前自己建这个文件，一行一个 Key。
+# key.txt 给视觉模型；key_tts.txt 可选（专门给语音的），没有就用 key.txt。
 key.txt
+key_tts.txt
 .env
 *.key
+
+# 默认音色：写的是你自己账号里的音色 ID，别人拿了也用不了，各自配各自的
+voice.txt
 
 # 抓下来的游戏帧（都是你的游戏画面，没必要传，也占空间）
 captures/
@@ -17,3 +22,8 @@ env/
 __pycache__/
 *.pyc
 *.log
+
+# 录音和生成的音频（录音是你的声音，不外传）
+*.wav
+*.mp3
+*.m4a

@@ -17,12 +17,23 @@
     结论一旦超过 40 字，基本来不及在重生前听完。
     所以 max_tokens 要从 120 往下压（建议 60），这是让语音真正能落地的代价。
 
-    另外试过用 speed 参数加速：1.2 和 1.0 播完时间一样，1.5 反而更长 ——
-    这个参数在 qwen3-tts-flash 上不起作用，所以代码里干脆没留这个旋钮。
+关于语速旋钮（2026-10-22 换到 CosyVoice 后重新可用）：
+    旧模型 qwen3-tts-flash 的 speed 参数是摆设（1.2 和 1.0 播完时间一样，
+    1.5 反而更长），所以当时干脆没留旋钮。
+    换到 cosyvoice-v3.5-flash 之后 speech_rate 是真起作用的，22 字实测：
+        1.0 -> 6.62s   1.2 -> 5.52s   1.4 -> 4.73s   1.6 -> 4.14s
+    这是白捡的收益：同样的字，念完快了三分之一，阵亡窗口够用多了。
+
+两条路，靠音色的长相自动选：
+    1) 克隆音色（voice 是一串 xxx-xxx-hash）-> cosyvoice-v3.5-flash，支持语音克隆 + 语速
+    2) 预置音色（Cherry/Serena/Ethan/Chelsie）-> qwen3-tts-flash，不支持语速
+    音色 ID 里自带模型名前��（cosyvoice-v3.5-flash-coach-xxxx），
+    所以模型名是从 ID 反推的 —— 百炼要求音色和模型必须配套，写死会报错。
 
 单独试听：
     python tts.py "念点什么"
     python tts.py "念点什么" --voice Ethan
+    python tts.py "念点什么" --voice cosyvoice-v3.5-flash-coach-xxxx --rate 1.4
 """
 import argparse
 import base64
@@ -46,8 +57,13 @@ IDLE_STATE = _State.IdleState
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-TTS_MODEL = "qwen3-tts-flash"        # 账号里实测可用的（cosyvoice 系列没开通）
-PRICE_PER_10K_CHARS = 0.8            # 元/万字符，2026-10-22 核实
+# 两条路，见文件头的说明
+LEGACY_MODEL = "qwen3-tts-flash"        # 预置音色走这条（Cherry/Serena/Ethan/Chelsie）
+CLONE_MODEL = "cosyvoice-v3.5-flash"    # 克隆音色走这条（支持语音克隆 + 语速）
+TTS_MODEL = LEGACY_MODEL                # 默认值，实际用哪个看 voice 的长相
+DEFAULT_RATE = 1.2                      # 克隆音色专用；1.0 偏慢，1.4 开始有点赶
+
+PRICE_PER_10K_CHARS = 0.8               # 元/万字符，2026-10-22 核实
 # 流式返回的 usage 里 characters 恒为 0，拿不到。所以用单次模式标定了一个近似关系：
 #   1字→2  2字→4  8字→16  17字→33  23字→44   ⇒ 中文一个字按 2 个计费字符算
 CHARS_PER_CN = 2
@@ -62,10 +78,58 @@ PREBUFFER_MS = 250                   # 攒够这么多毫秒再开播，防止�
 # 断句符号：模型流式吐字时，碰到这些就先把前半句送去重合成
 _SENT_END = re.compile(r"[。！？；!?\n]")
 
+# 至少得有一个正经字（中文 / 字母 / 数字）才值得送去合成。
+# 实测：CosyVoice 遇到只有一个句号、或者只有标点的片段会直接拒收，
+# 报 "Please ensure input text is valid"。流式切句很容易切出这种碎渣。
+_HAS_WORD = re.compile(r"[\u4e00-\u9fa5A-Za-z0-9]")
+
+
+def is_clone_voice(v):
+    """音色 ID 长这样：cosyvoice-v3.5-flash-coach-02f1c882...（结尾是一串十六进制）。
+    预置音色则是 Cherry / Serena 这种普通名字。靠这个区分走哪条路。"""
+    return bool(v) and bool(re.match(r"^.+-.+-[0-9a-f]{8,}$", v))
+
+
+def model_for_voice(voice):
+    """百炼要求：音色必须和创建它时的 target_model 配套，写错就报错。
+    好在音色 ID 自带模型名前缀，反推出来最保险。"""
+    if is_clone_voice(voice):
+        return voice.rsplit("-", 2)[0]      # 去掉 -前缀-hash，剩下的就是模型名
+    return LEGACY_MODEL
+
+
+def tts_api_key():
+    """语音用的 Key。
+
+    有 key_tts.txt 就优先用它（专门给语音的 Key 放这里），
+    没有的话跟视觉模型共用 key.txt。
+    """
+    for name in ("key_tts.txt", "key.txt"):
+        p = os.path.join(HERE, name)
+        if os.path.exists(p):
+            s = open(p, encoding="utf-8").read().strip()
+            if s:
+                return s
+    raise RuntimeError("没找到 API Key：建一个 key.txt（或给语音单独建 key_tts.txt）粘进去")
+
 
 def available_voices():
-    """账号实测通过的音色（longxiaochun 那一批没开通，会报 400）。"""
+    """预置音色（账号实测通过的）。想用克隆音色跑 voice_clone.py --list 看。"""
     return ["Cherry", "Serena", "Ethan", "Chelsie"]
+
+
+def default_voice():
+    """默认音色：voice.txt 里写什么就用什么，没这个文件就用 Cherry。
+
+    克隆完自己的声音之后，把音色 ID 写进 voice.txt（一行），
+    以后双击 run.bat 就是自己的声音在念，不用每次带参数。
+    """
+    p = os.path.join(HERE, "voice.txt")
+    if os.path.exists(p):
+        s = open(p, encoding="utf-8").read().strip()
+        if s:
+            return s
+    return "Cherry"
 
 
 class ChunkDevice(QIODevice):
@@ -100,6 +164,85 @@ class ChunkDevice(QIODevice):
         return self._buf.size()
 
 
+def _iter_clone_blocks(model, voice, text, rate, api_key):
+    """克隆音色：用 tts_v2 的回调式流式接口。
+
+    它是「调用之后通过回调往外吐」的模型，不是迭代器，
+    所以这里拿一个队列把它桥接成生成器，好让后面的代码两种模型一视同仁。
+    好处是它直接给裸 PCM，不像旧接口那样要先 base64 解码再剥 WAV 头。
+    """
+    import dashscope
+    from dashscope.audio.tts_v2 import SpeechSynthesizer, AudioFormat, ResultCallback
+
+    dashscope.api_key = api_key
+    q = queue.Queue()
+
+    class _Cb(ResultCallback):
+        def on_open(self):
+            pass
+
+        def on_data(self, data):
+            q.put(data)
+
+        def on_complete(self):
+            pass
+
+        def on_close(self):
+            q.put(None)
+
+        def on_error(self, message):
+            q.put(("ERR", str(message)[:300]))
+
+        def on_event(self, message):
+            pass
+
+    synth = SpeechSynthesizer(model=model, voice=voice,
+                              format=AudioFormat.PCM_24000HZ_MONO_16BIT,
+                              speech_rate=rate, callback=_Cb())
+
+    def _run():
+        try:
+            synth.streaming_call(text)
+            synth.streaming_complete()
+        except Exception as e:
+            q.put(("ERR", f"{type(e).__name__}: {str(e)[:200]}"))
+        finally:
+            q.put(None)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    while True:
+        item = q.get()
+        if item is None:
+            break
+        if isinstance(item, tuple):
+            raise RuntimeError(item[1])
+        yield item
+
+
+def _iter_legacy_blocks(model, voice, text, api_key):
+    """预置音色：旧接口，迭代器式流式返回。
+
+    注意两点坑：
+    - 流式返回里 audio 是 dict 不是对象，只能用 ['data'] 取
+    - 第一块带 44 字节 WAV 头，要剥掉，后面全是裸 PCM
+    """
+    import dashscope
+    from dashscope.audio.qwen_tts import SpeechSynthesizer
+
+    dashscope.api_key = api_key
+    for resp in SpeechSynthesizer.call(model=model, text=text, voice=voice,
+                                       stream=True):
+        d = resp.output.audio["data"]
+        if not d:
+            continue
+        b = base64.b64decode(d)
+        if b[:4] == b"RIFF":
+            i = b.find(b"data")
+            b = b[i + 8:] if i >= 0 else b[44:]
+        yield b
+
+
 class Speaker(QObject):
     """把文字变成声音。用法：
         sp = Speaker()
@@ -111,10 +254,12 @@ class Speaker(QObject):
     finished = Signal(float)     # 全部念完，参数是总秒数
     failed = Signal(str)
 
-    def __init__(self, voice="Cherry", model=TTS_MODEL):
+    def __init__(self, voice="Cherry", model=None, rate=DEFAULT_RATE):
         super().__init__()
         self.voice = voice
-        self.model = model
+        # 不传 model 就按音色的长相自己挑（克隆音色必须配它自己的模型）
+        self.model = model or model_for_voice(voice)
+        self.rate = rate      # 只对克隆音色有效，旧模型的语速参数是摆设
 
         self._pending = ""                # 攒着还没断句的文字
         self._tasks = queue.Queue()       # 待合成的句子
@@ -207,29 +352,28 @@ class Speaker(QObject):
     def _gen_loop(self):
         """合成线程：一句一句做，把拿到的 PCM 扔进池子给主线程取。"""
         try:
-            import dashscope
-            dashscope.api_key = open(os.path.join(HERE, "key.txt"),
-                                     encoding="utf-8").read().strip()
-            from dashscope.audio.qwen_tts import SpeechSynthesizer
+            api_key = tts_api_key()
             while True:
                 piece = self._tasks.get()
                 if piece is None:
                     break
+                if not _HAS_WORD.search(piece):
+                    continue          # 纯标点的碎渣，跳过，别白跑一次请求
                 self._chars += len(piece)
-                kw = {"model": self.model, "text": piece, "voice": self.voice,
-                      "stream": True}
-                for resp in SpeechSynthesizer.call(**kw):
-                    # 注意：流式返回里 audio 是 dict，不是对象，只能用 ['data']
-                    d = resp.output.audio["data"]
-                    if not d:
-                        continue
-                    b = base64.b64decode(d)
-                    if b[:4] == b"RIFF":
-                        # 第一块带 44 字节的 WAV 头，跳过它只要 PCM
-                        i = b.find(b"data")
-                        b = b[i + 8:] if i >= 0 else b[44:]
-                    with self._lock:
-                        self._pool.append(b)
+                if is_clone_voice(self.voice):
+                    gen = _iter_clone_blocks(self.model, self.voice, piece,
+                                             self.rate, api_key)
+                else:
+                    gen = _iter_legacy_blocks(self.model, self.voice, piece,
+                                              api_key)
+                try:
+                    for b in gen:
+                        with self._lock:
+                            self._pool.append(b)
+                except Exception as e:
+                    # 这一句没合成成功就算了，别让后面的句子跟着一起哑掉
+                    self.failed.emit(f"有一句没念出来：{type(e).__name__}:"
+                                     f"{str(e)[:80]}")
         except Exception as e:
             self.failed.emit(f"{type(e).__name__}: {str(e)[:160]}")
         finally:
@@ -282,7 +426,7 @@ class Speaker(QObject):
         self.sink.start(self.device)
 
 
-def speak_blocking(text, voice="Cherry", timeout=60):
+def speak_blocking(text, voice="Cherry", rate=DEFAULT_RATE, timeout=60):
     """没有界面时也能念：自己起一个最小的事件循环，念完才返回。
 
     控制台模式（--no-overlay）用它。有界面的地方别用它 —— 会卡住。
@@ -291,7 +435,7 @@ def speak_blocking(text, voice="Cherry", timeout=60):
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
 
-    sp = Speaker(voice=voice)
+    sp = Speaker(voice=voice, rate=rate)
     got = {}
     sp.started.connect(lambda t: print(f"  [出声 {t:.2f}s]", flush=True))
     sp.failed.connect(lambda m: print(f"  !! 语音失败: {m}", flush=True))
@@ -318,7 +462,12 @@ def speak_blocking(text, voice="Cherry", timeout=60):
 def _cli():
     ap = argparse.ArgumentParser()
     ap.add_argument("text", nargs="?", default="这次走位太靠中间了，下次贴着右边的掩体推进。")
-    ap.add_argument("--voice", default="Cherry", help="音色: " + "/".join(available_voices()))
+    ap.add_argument("--voice", default="Cherry",
+                    help="预置音色: " + "/".join(available_voices())
+                         + "；或克隆音色 ID（跑 voice_clone.py --list 看）")
+    ap.add_argument("--rate", type=float, default=DEFAULT_RATE,
+                    help=f"语速，默认 {DEFAULT_RATE}。只对克隆音色有效"
+                         f"（1.0 偏慢，1.4 开始有点赶）")
     ap.add_argument("--file", default=None, help="从文件读文本")
     a = ap.parse_args()
 
@@ -327,7 +476,7 @@ def _cli():
     from PySide6.QtWidgets import QApplication
     app = QApplication([])
 
-    sp = Speaker(voice=a.voice)
+    sp = Speaker(voice=a.voice, rate=a.rate)
     sp.started.connect(lambda t: print(f"  出声 {t:.2f}s", flush=True))
     sp.finished.connect(lambda t: (print(f"  播完 {t:.2f}s", flush=True),
                                    print(f"  {sp.cost_text()}", flush=True)))
@@ -336,6 +485,7 @@ def _cli():
 
     print("=" * 60)
     print(f"  文本 {len(text)} 字 | 音色 {a.voice}")
+    print(f"  模型 {sp.model} | 语速 {a.rate}")
     print("=" * 60)
     sp.speak(text)
 

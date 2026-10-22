@@ -118,6 +118,18 @@ def _layout():
     return ("ok", f"{n} 字") if n else ("warn", "layout.txt 是空的")
 
 
+def _voice():
+    """现在用哪个声音念？预置音色还是自己克隆的。"""
+    try:
+        from tts import default_voice, is_clone_voice, model_for_voice
+    except Exception as e:
+        return "fail", f"tts.py 加载不了：{e}"
+    v = default_voice()
+    if is_clone_voice(v):
+        return "ok", f"克隆音色，走 {model_for_voice(v)}（能调语速）"
+    return "ok", f"预置音色 {v}，走 qwen3-tts-flash（不能调语速）"
+
+
 def _outdir():
     p = os.path.join(HERE, "captures")
     try:
@@ -185,6 +197,8 @@ def main():
           "去 bailian.console.aliyun.com 建一个 Key，粘进 key.txt，一行，别加引号")
     check("布局文件", _layout,
           "README 里说它是整个项目最值钱的文件，换游戏就改它")
+    check("默认音色", _voice,
+          "想用自己的声音就跑 voice_clone.py 登记一个")
     check("输出目录", _outdir, "当前用户对这个文件夹没写权限，换个地方放项目")
 
     if ONLINE:
