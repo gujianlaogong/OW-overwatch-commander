@@ -1,0 +1,7 @@
+openai>=1.40        # 视觉分析（走百炼的 OpenAI 兼容接口）
+dashscope>=1.20     # 语音合成 qwen3-tts-flash
+dxcam>=0.3.0        # 主抓帧后端（DXGI 桌面复制）
+opencv-python>=4.8  # ★ dxcam 的硬依赖，缺了它 dxcam 会静默降级到 mss（慢 3 倍）
+mss>=9.0            # 备用抓帧后端
+pillow>=10.0        # 抽帧 / 缩放 / 存 JPEG
+PySide6>=6.6        # 浮层卡片 + 音频播放

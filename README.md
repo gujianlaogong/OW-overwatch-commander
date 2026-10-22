@@ -26,7 +26,8 @@
 | 语音播报 | 百炼 **qwen3-tts-flash**（dashscope 原生接口） | 实时流式合成 + 边收边播；出声约 1 秒，单次约 0.2~0.4 分钱 |
 | 语音播放 | PySide6 **QtMultimedia**（QAudioSink） | 界面已经有 Qt 了，不再引入 pyaudio 之类的依赖 |
 | 界面 | **PySide6 6.12（Qt 6）** | 置顶 / 逐像素透明 / 鼠标穿透都是原生支持，卡片本体可做半透明玻璃质感 |
-| 运行时 | Python 3.13（venv） | 依赖隔离，不污染系统 Python |
+| 色彩处理 | **opencv-python** | dxcam 的硬依赖，缺了会静默降级到慢速后端 |
+| 运行时 | Python 3.10+（项目内 `.venv`） | 依赖隔离，不污染系统 Python；路径不写死任何机器 |
 
 **为什么界面不用 pywebview**：实测它在 Windows 上的透明是半成品——源码里没实现窗体级透明，透明模式下窗口还会藏着不显示。Qt 的逐像素 alpha 是真透明，卡片本身能半透明，圆角也没有黑边。
 
@@ -58,12 +59,37 @@
 
 ## 安装
 
-**1. 建环境、装依赖**
+需要 **Windows** + **Python 3.10 以上**（本项目在 3.13 上跑通）。下面所有命令都在**项目文件夹里**执行。
+
+**0. 拿到代码**
+
+```bat
+git clone https://github.com/gujianlaogong/OW-overwatch-commander.git
+cd OW-overwatch-commander
+```
+
+（下载 zip 解压也一样，进到那个文件夹就行。）
+
+**1. 建一个虚拟环境，把依赖装进去**
+
+CMD / PowerShell：
+
+```bat
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Git Bash 这类 shell（斜杠反过来）：
 
 ```bash
-C:/Users/11834/.workbuddy/binaries/python/versions/3.13.12/python.exe -m venv C:/Users/11834/.workbuddy/binaries/python/envs/default
-C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe -m pip install openai dxcam mss pillow PySide6 dashscope
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
+
+> - `python` 命令不存在？去 [python.org](https://www.python.org/downloads/) 装（记得勾 "Add python.exe to PATH"），或者把命令里的 `python` 换成 `py -3`。
+> - 依赖装在项目自己的 `.venv` 里，**不污染系统 Python**。装完之后，这个项目用的永远是 `.venv` 里那个解释器。
+> - `.venv` 已经在 `.gitignore` 里，不会进仓库，所以每个人都在自己机器上建一次。
+> - **`opencv-python` 不是可选的**：dxcam 拿它做色彩转换，缺了会静默降级到 mss 后端，单帧从约 13 ms 掉到约 40 ms，全屏独占下也更容易抓到黑屏。启动时认准控制台那行 `使用后端: dxcam`。
 
 **2. 填 API Key**
 
@@ -79,14 +105,25 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe -m pip
 
 ### 最省事：双击 `run.bat`
 
-它会自动切到正确目录、用装好依赖的那个 Python 启动。
+它会自动切到正确目录、找到 `.venv` 里的 Python 启动。没建虚拟环境的话它会提示你该敲哪两行，不会闷头报错。
 
 ### 命令行
 
-```bash
-cd /c/Users/11834/WorkBuddy/2026-10-21-12-12-14/game-coach
-C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.py --analyze
+CMD / PowerShell：
+
+```bat
+.venv\Scripts\python.exe coach.py --analyze
 ```
+
+Git Bash：
+
+```bash
+./.venv/Scripts/python.exe coach.py --analyze
+```
+
+> 后面所有命令都省掉了前面的 `.venv\Scripts\python.exe`，写全就是
+> `.venv\Scripts\python.exe analyze.py --dir ...` 这样。
+> 如果你已经激活了虚拟环境（`.venv\Scripts\activate`），直接写 `python coach.py --analyze` 也行。
 
 然后：
 
@@ -108,9 +145,9 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.
 
 只分析已有的一组帧（不抓屏）：
 
-```bash
-...python.exe analyze.py --dir captures/20261021_200153
-...python.exe analyze.py --no-overlay     # 不要浮层，纯控制台输出
+```bat
+.venv\Scripts\python.exe analyze.py --dir captures\<那次落盘的目录名>
+.venv\Scripts\python.exe analyze.py --no-overlay     :: 不要浮层，纯控制台输出
 ```
 
 ---
@@ -138,12 +175,20 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.
 coach.py          主程序：后台缓存 + 热键 + 落盘
 analyze.py        分析：抽帧 → 调视觉模型 → 出结论
 overlay.py        浮层卡片（Qt）
-tts.py            语音层：流式合成 + 边收边播（单独试听：python tts.py "文字"）
+tts.py            语音层：流式合成 + 边收边播
 layout.txt        ★ 界面布局说明，按你玩的游戏自己改
-run.bat           双击启动
+requirements.txt  依赖清单（pip install -r 用）
+run.bat           双击启动（自动找 .venv，不含任何机器专属路径）
+key.txt           API Key，自己建，不进仓库
 cap_probe.py      抓帧自检（含黑屏检测）
 qt_probe.py       浮层三要素自检（置顶/透明/穿透）
 tts_probe.py      语音选型探测（模型/音色/延迟）
+```
+
+单独试听某个音色：
+
+```bat
+.venv\Scripts\python.exe tts.py "这句话念出来听听" --voice Ethan
 ```
 
 ### `layout.txt` 是整个项目里最值钱的文件
