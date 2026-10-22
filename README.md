@@ -2,7 +2,7 @@
 
 > 阵亡等待重生的那 5~15 秒里，回看你刚才那一波，告诉你最该改的地方。
 
-一个跑在 Windows 上的 FPS「阵亡间隙即时复盘」工具。按一下键，约 3 秒后，屏幕右下角浮出一张卡片，写着刚才那一波你错在哪。
+一个跑在 Windows 上的 FPS「阵亡间隙即时复盘」工具。按一下键，约 3 秒后，屏幕右下角浮出一张卡片，**同时开口把结论念出来**，写着（说着）刚才那一波你错在哪。
 
 ---
 
@@ -23,6 +23,8 @@
 | 触发 | **GetAsyncKeyState 轮询** | 不装系统全局钩子（在受限办公机上实测装了也不触发；且钩子对反作弊更显眼） |
 | 抽帧 | **Pillow** + `frames.txt` 时间戳 | 从最后 10 秒里均匀抽 8 帧，兼顾时序和成本 |
 | 视觉理解 | 阿里云百炼 **qwen3-vl-plus** | 多图 + 流式；首字约 1~2 秒，单次约 0.6 分钱 |
+| 语音播报 | 百炼 **qwen3-tts-flash**（dashscope 原生接口） | 实时流式合成 + 边收边播；出声约 1 秒，单次约 0.2~0.4 分钱 |
+| 语音播放 | PySide6 **QtMultimedia**（QAudioSink） | 界面已经有 Qt 了，不再引入 pyaudio 之类的依赖 |
 | 界面 | **PySide6 6.12（Qt 6）** | 置顶 / 逐像素透明 / 鼠标穿透都是原生支持，卡片本体可做半透明玻璃质感 |
 | 运行时 | Python 3.13（venv） | 依赖隔离，不污染系统 Python |
 
@@ -42,11 +44,15 @@
 发给视觉模型（流式）
    ↓  想到一个字就回一个字
 右下角浮出卡片，一个字一个字蹦出来
-   ↓  停留 7 秒
+   ↓  文字同时喂给语音合成（攒够一句就开念）
+耳朵听到结论（约 3.5 秒出声，念完约 6 秒）
+   ↓  语音播完后卡片再淡出
 自动淡出
 ```
 
 **为什么必须"一直存"**：你死的那一刻，正是战斗画面已经没了的那一刻。死了再截图只会拿到死亡黑屏。所以缓存是地基，不是截图。
+
+**为什么语音也要流式**：实测 23 个字的结论，音频长 4.4 秒，全部合成完只要 1.3 秒——合成速度是播放速度的 3.3 倍。所以收到第一块就开播，0.5 秒出声，后面永远有货。等整段合成完再播就是白白多等一秒。
 
 ---
 
@@ -56,7 +62,7 @@
 
 ```bash
 C:/Users/11834/.workbuddy/binaries/python/versions/3.13.12/python.exe -m venv C:/Users/11834/.workbuddy/binaries/python/envs/default
-C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe -m pip install openai dxcam mss pillow PySide6
+C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe -m pip install openai dxcam mss pillow PySide6 dashscope
 ```
 
 **2. 填 API Key**
@@ -96,6 +102,9 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.
 | `--key xbutton1` | 换触发键。**推荐鼠标侧键**，FPS 里不抢键位（`xbutton1`/`xbutton2`） |
 | `--post 0` | 按键立刻落盘，不抓死后那 2 秒 |
 | `--fps 3 --seconds 30` | 缓存采样率与时长 |
+| `--no-voice` | 不念出来，只看卡片 |
+| `--voice Ethan` | 换音色，实测可用：Cherry / Serena / Ethan / Chelsie |
+| `--max-tokens 60` | 结论最长多少字。**接了语音之后这是硬约束**：每字约 0.18 秒音频，60 字就要念 10 秒以上，重生前听不完 |
 
 只分析已有的一组帧（不抓屏）：
 
@@ -114,9 +123,12 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.
 | 缓存吃满 90 帧 | 约 6.1 MB |
 | 按键 → 落盘 30 帧 | 67~717 ms |
 | 模型首字 / 说完 | 约 1.0~2.0 s / 2.0~2.7 s |
-| 单次成本 | 约 0.6 分钱（一局死 10 次约 6 分钱） |
+| 按键 → 出声 | 约 3.5 秒（分析 2.7 秒 + 合成首块 1 秒） |
+| 按键 → 念完 | 约 6 秒（15 字结论） |
+| 语音合成速度 | 是播放速度的 3.3 倍，边收边播不卡 |
+| 单次成本 | 视觉约 0.6 分钱 + 语音约 0.2~0.4 分钱 |
 
-阵亡等待通常有十几秒，2.7 秒说完绰绰有余。成本这一项基本可以从考虑清单里划掉。
+阵亡等待通常有十几秒，从按键到听完约 6 秒，正好赶在重生前。成本这一项基本可以从考虑清单里划掉。
 
 ---
 
@@ -126,10 +138,12 @@ C:/Users/11834/.workbuddy/binaries/python/envs/default/Scripts/python.exe coach.
 coach.py          主程序：后台缓存 + 热键 + 落盘
 analyze.py        分析：抽帧 → 调视觉模型 → 出结论
 overlay.py        浮层卡片（Qt）
+tts.py            语音层：流式合成 + 边收边播（单独试听：python tts.py "文字"）
 layout.txt        ★ 界面布局说明，按你玩的游戏自己改
 run.bat           双击启动
 cap_probe.py      抓帧自检（含黑屏检测）
 qt_probe.py       浮层三要素自检（置顶/透明/穿透）
+tts_probe.py      语音选型探测（模型/音色/延迟）
 ```
 
 ### `layout.txt` 是整个项目里最值钱的文件
@@ -150,17 +164,19 @@ qt_probe.py       浮层三要素自检（置顶/透明/穿透）
 1. **全屏独占会抓到黑屏**，必须改成无边框窗口。
 2. **触发是手动的**。自动检测死亡没做——三个游戏的死亡画面长得完全不一样，误判会烦死人。先手动，跑通再说。
 3. **按晚了会让分析失焦**。缓存一直在存，所以不会丢画面；但分析固定取"最后 10 秒"，如果你死了 10 秒才按，那 10 秒全是死亡画面。养成一死就按的习惯，或用 `--post 0`。
-4. **需要联网**调 API。
-5. **只支持 Windows**（抓帧和浮层都依赖 Win32 / DXGI）。
+4. **结论必须短**。接了语音后这是硬约束：中文每字约 0.18 秒音频，默认 `--max-tokens 60` + 提示词里限 30 字，就是为了让它在重生前念得完。`speed` 加速参数在 qwen3-tts-flash 上实测无效。
+5. **音色只有四个**（Cherry/Serena/Ethan/Chelsie）。想要克隆音色需要 cosyvoice 系列，当前账号未开通；开通后 `tts.py` 换个模型名就能接。
+6. **需要联网**调 API（视觉和语音都是云端）。
+7. **只支持 Windows**（抓帧、浮层、音频都依赖 Win32 / DXGI / WASAPI）。
 
 ---
 
 ## 路线图
 
 - 自动检测死亡瞬间（画面去色/灰屏特征），从死亡点往回取帧
+- 知识层：英雄/技能数据（athena-api 等开源数据源已验证可用），先识别"场上是谁"再注入对应知识
 - 卡片上加关键帧缩略图
 - 卡片可拖动、可调透明度
-- 语音播报（现在结论只在屏幕上，全屏游戏时看不见）
 
 ---
 

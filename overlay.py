@@ -185,10 +185,12 @@ class StreamWorker(QThread):
             self.failed.emit(f"{type(e).__name__}: {str(e)[:160]}")
 
 
-def run_with_overlay(call, args, d, frames, prompt, usage_cb=None):
+def run_with_overlay(call, args, d, frames, prompt, usage_cb=None, speaker=None):
     """开一个 Qt 界面跑完整流程：卡片滑入 → 逐字蹦出来 → 停留 → 淡出 → 退出。
 
-    call: 真正的 API 调用函数，签名里必须接受 on_chunk/on_first/on_done/on_usage
+    call:    真正的 API 调用函数，签名里必须接受 on_chunk/on_first/on_done/on_usage
+    speaker: 传进来的 Speaker（已经在预热了）。有了它，模型吐字会同步喂给语音，
+             而且卡片会等语音播完再淡出 —— 不然字念到一半卡片就消失了。
     """
     app = QApplication.instance() or QApplication(sys.argv)
     ov = CoachOverlay()
@@ -196,13 +198,30 @@ def run_with_overlay(call, args, d, frames, prompt, usage_cb=None):
     ov.slide_in()
 
     w = StreamWorker(call, args=args, d=d, frames=frames, prompt=prompt)
-    w.chunk.connect(ov.push)
+
+    def on_chunk(ch):
+        ov.push(ch)
+        if speaker is not None:
+            speaker.feed(ch)      # 边生成边喂，攒够一句就开念
+
+    w.chunk.connect(on_chunk)
     w.first.connect(lambda t: (ov.begin(), ov.set_foot(f"首字 {t:.1f}s")))
     w.usage.connect(lambda u: usage_cb(u) if usage_cb else None)
 
+    def quit_soon(delay=0):
+        QTimer.singleShot(delay, lambda: ov.fade_out(then=app.quit))
+
     def on_done(total, n):
         ov.set_foot(f"用时 {total:.1f}s · {n} 字")
-        QTimer.singleShot(HOLD_MS, lambda: ov.fade_out(then=app.quit))
+        if speaker is not None:
+            speaker.finish()       # 把剩下的零碎也念了
+            # 卡片留着，等念完再走；万一语音那边出岔子，25 秒后也强制退出
+            speaker.finished.connect(
+                lambda t: (ov.set_foot(f"用时 {total:.1f}s · {n} 字 · 语音播完 {t:.1f}s"),
+                           quit_soon(600)))
+            QTimer.singleShot(25000, lambda: quit_soon(0))
+        else:
+            quit_soon(HOLD_MS)
 
     w.done.connect(on_done)
     w.failed.connect(lambda m: (

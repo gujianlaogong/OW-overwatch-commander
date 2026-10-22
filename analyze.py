@@ -32,6 +32,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CAP_DIR = os.path.join(HERE, "captures")
 MODEL = "qwen3-vl-plus"
 
+# 默认只让模型说这么长。不是省 token，是语音层的硬约束：
+# 实测中文每字约 0.18 秒音频，阵亡等待只有 5~15 秒，
+# 说完 60 字已经要 10 秒以上，再长就听不完。想要更详细的结论用 --max-tokens。
+DEFAULT_MAX_TOKENS = 60
+
 # 大陆区价格（元/百万 token），2026-10-21 核实
 PRICE_IN = 1.2
 PRICE_OUT = 12.0
@@ -159,7 +164,9 @@ def prepare(args):
         f"以下是按时间顺序排列的 {len(frames)} 张游戏截图，"
         f"相邻两张间隔约 {gap:.2f} 秒，最后一张是我阵亡的瞬间或刚阵亡之后。\n"
         f"{layout}\n"
-        "现在告诉我：这一波我最该改的地方是什么。"
+        "现在告诉我：这一波我最该改的地方是什么。\n"
+        "只讲最该改的一条，控制在 30 字以内，说完立刻停 —— "
+        "这段话是要念出来听的，长了来不及在重生前听完。"
     )
     return d, frames, prompt
 
@@ -169,9 +176,15 @@ def main():
     ap.add_argument("--dir", default=None)
     ap.add_argument("--window", type=float, default=10.0, help="只看最后几秒，默认 10")
     ap.add_argument("--n", type=int, default=8, help="抽几帧，默认 8")
-    ap.add_argument("--max-tokens", type=int, default=120)
+    ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
+                    help=f"最多说多少字，默认 {DEFAULT_MAX_TOKENS}（再长就念不完了）")
     ap.add_argument("--no-overlay", action="store_true", help="不弹浮层卡片，只输出到控制台")
+    ap.add_argument("--no-voice", action="store_true", help="不念出来")
+    ap.add_argument("--voice", default="Cherry",
+                    help="音色，实测可用: Cherry / Serena / Ethan / Chelsie")
     args = ap.parse_args()
+
+    want_voice = not args.no_voice
 
     pre = prepare(args)
     if not pre:
@@ -202,11 +215,33 @@ def main():
         print(f"  {cost_text(usage)}")
         if total > 12:
             print("\n  ⚠ 超过了阵亡等待窗口，来不及在重生前说完。考虑减少帧数或缩短 window。")
+        if want_voice and text.strip():
+            try:
+                from tts import speak_blocking
+                speak_blocking(text.strip(), voice=args.voice)
+            except Exception as e:
+                print(f"  !! 语音播报失败（不影响上面文字）: {type(e).__name__}: {str(e)[:140]}")
     else:
         from overlay import run_with_overlay
+
+        speaker = None
+        if want_voice:
+            # 提前把合成线程拉起来：它加载 dashscope 的那几百毫秒，
+            # 正好和视觉模型 2 秒的思考同时跑掉，不用额外等。
+            try:
+                from tts import Speaker
+                speaker = Speaker(voice=args.voice)
+                speaker.failed.connect(
+                    lambda m: print(f"  !! 语音失败: {m}", flush=True))
+                speaker.prime()
+            except Exception as e:
+                print(f"  !! 语音没起来（只看卡片）: {type(e).__name__}: {str(e)[:140]}")
+                speaker = None
+
         run_with_overlay(
             call_model, args, d, frames, prompt,
             usage_cb=lambda u: print(f"  {cost_text(u)}", flush=True),
+            speaker=speaker,
         )
 
 
