@@ -9,11 +9,14 @@
     python check.py             基础体检
     python check.py --online    额外验证 API Key 和联网（免费，不调模型，不花钱）
 """
+import json
 import os
 import sys
 import time
 import traceback
 import unicodedata
+
+from config import CONFIG_PATH, load as load_config
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -130,6 +133,42 @@ def _voice():
     return "ok", f"预置音色 {v}，走 qwen3-tts-flash（不能调语速）"
 
 
+def _config():
+    """设置界面写出来的那份配置还能不能用。
+
+    没这个文件是正常的 —— 程序会退回到出厂设定照样跑。
+    怕的是文件在但坏掉了（比如手改 JSON 少了个逗号）：load() 为了不崩会自动吞掉
+    这个错误、退回默认值，所以这里必须自己先看一眼原始文件，才查得出来。
+    """
+    if not os.path.exists(CONFIG_PATH):
+        return "ok", "还没配过，按出厂设定跑（双击 settings.bat 可以改）"
+
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            json.load(f)
+    except Exception as e:
+        return "fail", f"config.json 写坏了（{e}），正按出厂设定跑；删掉它就恢复"
+
+    cfg = load_config()
+
+    # 四个称呼空着的话，提示词里会出现「亲爱的 ，」这种断句
+    blank = [n for k, n in (("user_name", "你的名字"),
+                            ("user_title", "教练叫你什么"),
+                            ("coach_name", "教练叫什么"),
+                            ("coach_self", "教练自称"))
+             if not str(cfg.get(k, "")).strip()]
+    if blank:
+        return "warn", "这几项留空了：" + "、".join(blank)
+
+    # 提示词里必须留着花括号占位符，改坏了称呼就注入不进去
+    p = cfg.get("prompt") or ""
+    if "{user_title}" not in p and "{coach_name}" not in p:
+        return "warn", "提示词里没有称呼占位符，改称呼不会生效"
+
+    return "ok", (f"教练 {cfg['coach_name']} 叫你「{cfg['user_title']}」"
+                  f"，自称「{cfg['coach_self']}」")
+
+
 def _outdir():
     p = os.path.join(HERE, "captures")
     try:
@@ -197,8 +236,10 @@ def main():
           "去 bailian.console.aliyun.com 建一个 Key，粘进 key.txt，一行，别加引号")
     check("布局文件", _layout,
           "README 里说它是整个项目最值钱的文件，换游戏就改它")
+    check("称呼设定", _config,
+          "双击 settings.bat 打开设置界面，把四项称呼填好再保存")
     check("默认音色", _voice,
-          "想用自己的声音就跑 voice_clone.py 登记一个")
+          "想用自己的声音就在设置界面里克隆一个")
     check("输出目录", _outdir, "当前用户对这个文件夹没写权限，换个地方放项目")
 
     if ONLINE:

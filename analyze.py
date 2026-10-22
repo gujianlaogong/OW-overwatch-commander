@@ -28,14 +28,15 @@ from glob import glob
 
 from openai import OpenAI
 
+import config as _cfg
+from config import load as load_config, render_prompt
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CAP_DIR = os.path.join(HERE, "captures")
 MODEL = "qwen3-vl-plus"
 
-# 默认只让模型说这么长。不是省 token，是语音层的硬约束：
-# 实测中文每字约 0.18 秒音频，阵亡等待只有 5~15 秒，
-# 说完 60 字已经要 10 秒以上，再长就听不完。想要更详细的结论用 --max-tokens。
-DEFAULT_MAX_TOKENS = 60
+# 提示词的最佳整合长度和上限都放在 config.json 里（界面可调），
+# 默认值由 config.DEFAULTS 提供，这里不再单独定一份，免得两处打架。
 
 # 大陆区价格（元/百万 token），2026-10-21 核实
 PRICE_IN = 1.2
@@ -142,6 +143,7 @@ def cost_text(usage):
 
 def prepare(args):
     """准备好要分析的东西，返回 (目录, 帧列表, 提示词)"""
+    cfg = load_config()
     d = args.dir or latest_dir()
     if not d or not os.path.isdir(d):
         print("没找到可分析的目录。先跑 coach.py 并按热键落盘。")
@@ -160,41 +162,41 @@ def prepare(args):
     if os.path.exists(layout_path):
         layout = open(layout_path, encoding="utf-8").read().strip()
 
-    prompt = (
-        f"以下是按时间顺序排列的 {len(frames)} 张游戏截图，"
-        f"相邻两张间隔约 {gap:.2f} 秒，最后一张是我阵亡的瞬间或刚阵亡之后。\n"
-        f"{layout}\n"
-        "现在告诉我：这一波我最该改的地方是什么。\n"
-        "只讲最该改的一条，控制在 30 字以内，说完立刻停 ——"
-        "当然，如果我有做的不错的地方你也要夸我，也要控制字数"
-        "这段话是要念出来听的，长了来不及在重生前听完。"
-        "记住我的名字—— 古见老公"
-    )
+    prompt = render_prompt(cfg, layout=layout, n=len(frames), gap=gap)
     return d, frames, prompt
 
 
 def main():
+    cfg = load_config()
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=None)
-    ap.add_argument("--window", type=float, default=10.0, help="只看最后几秒，默认 10")
-    ap.add_argument("--n", type=int, default=8, help="抽几帧，默认 8")
-    ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
-                    help=f"最多说多少字，默认 {DEFAULT_MAX_TOKENS}（再长就念不完了）")
+    ap.add_argument("--window", type=float, default=None,
+                    help=f"只看最后几秒，默认取配置：{cfg['window']}")
+    ap.add_argument("--n", type=int, default=None,
+                    help=f"抽几帧，默认取配置：{cfg['frames']}")
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help=f"最多说多少字，默认取配置：{cfg['max_tokens']}（再长就念不完了）")
     ap.add_argument("--no-overlay", action="store_true", help="不弹浮层卡片，只输出到控制台")
     ap.add_argument("--no-voice", action="store_true", help="不念出来")
     ap.add_argument("--voice", default=None,
                     help="音色：预置 Cherry/Serena/Ethan/Chelsie，或克隆音色 ID。"
-                         "不填就读 voice.txt（把音色 ID 写进去就不用每次带参数）")
+                         "不填就按界面里配的（配置文件 → voice.txt → Cherry 依次兜底）")
     ap.add_argument("--rate", type=float, default=None,
                     help="语速，只对克隆音色有效（1.0 偏慢，1.4 开始有点赶）")
     args = ap.parse_args()
 
+    # 命令行没给的，就用界面里配的值 —— 改完存盘，双击 run.bat 直接生效
+    args.window = args.window if args.window is not None else cfg["window"]
+    args.n = args.n if args.n is not None else cfg["frames"]
+    args.max_tokens = (args.max_tokens if args.max_tokens is not None
+                       else cfg["max_tokens"])
+
     want_voice = not args.no_voice
     if want_voice:
-        # 音色和语速都不传的话，按 voice.txt / 默认值来
         from tts import DEFAULT_RATE, default_voice
-        args.voice = args.voice or default_voice()
-        args.rate = args.rate or DEFAULT_RATE
+        # 优先级：命令行 --voice　＞　界面配置　＞　voice.txt　＞　Cherry
+        args.voice = args.voice or cfg.get("voice") or default_voice()
+        args.rate = args.rate or cfg.get("rate") or DEFAULT_RATE
 
     pre = prepare(args)
     if not pre:

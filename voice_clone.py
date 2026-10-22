@@ -109,6 +109,62 @@ def enroll(svc, audio_arg, prefix, is_url=False, wait=True):
     return voice_id
 
 
+def _service():
+    """建一个登记服务的连接。界面(settings.py)和命令行都从这里进去。
+
+    注意这里会把代理变量清掉 —— 之前踩过坑：环境变量里挂着死端口的代理，
+    dashscope 会直连那个端口然后超时，报一堆看不懂的错。
+    """
+    for _k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+               "http_proxy", "https_proxy", "all_proxy"):
+        os.environ.pop(_k, None)
+
+    for name in ("key_tts.txt", "key.txt"):
+        p = os.path.join(HERE, name)
+        if os.path.exists(p) and open(p, encoding="utf-8").read().strip():
+            break
+    else:
+        # 命令行可以直接 sys.exit；界面不行，得让它捕获后弹提示
+        raise RuntimeError(
+            "没找到 API Key。建一个 key.txt，把百炼的 Key 粘进去"
+            "（语音想单独用一个 Key 就建 key_tts.txt）")
+
+    import dashscope
+    from dashscope.audio.tts_v2 import VoiceEnrollmentService
+    dashscope.api_key = read_key()
+    return VoiceEnrollmentService()
+
+
+def list_clone_voices():
+    """列出账号里已有的克隆音色，返回 [(音色ID, 模型名, 状态)]。
+
+    失败时会抛出带人话的异常，界面那边直接显示给用户看。
+    """
+    try:
+        rows = _service().list_voices() or []
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"连不上百炼的语音服务：{type(e).__name__}: {str(e)[:150]}")
+    return [(v.get("voice_id", ""), v.get("target_model", ""), v.get("status", ""))
+            for v in rows]
+
+
+def enroll_file(path, prefix="myvoice", wait=True):
+    """拿一个本地音频去登记音色，返回音色 ID。
+
+    path 可以是任意本地文件（会自动编成 Data URI，不用先传公网）。
+    """
+    check_audio(path)
+    try:
+        svc = _service()
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"连不上百炼的语音服务：{type(e).__name__}: {str(e)[:150]}")
+    return enroll(svc, path, prefix, wait=wait)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", action="store_true", help="列出账号里已有的克隆音色")

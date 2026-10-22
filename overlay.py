@@ -60,9 +60,15 @@ class CoachOverlay(QWidget):
         card.setObjectName("card")
         card.setStyleSheet(CARD_QSS)
 
-        self.tag = QLabel("指挥官，D.VA专用频道")
+        # 抬头和开场白都听界面里配的称呼，写死在这儿就换不了了
+        from config import load as load_config
+        _c = load_config()
+        _title = _c.get("user_title") or "指挥官"
+        _coach = _c.get("coach_name") or "教练"
+
+        self.tag = QLabel(f"{_title}，{_coach}专用频道")
         self.tag.setObjectName("tag")
-        self.body = QLabel("D.VA正在回看这一波…")
+        self.body = QLabel(f"{_coach}正在回看这一波…")
         self.body.setObjectName("body")
         self.body.setWordWrap(True)
         self.body.setMaximumWidth(MAX_W - PAD * 2)  # 到限宽就换行，卡片往下长
